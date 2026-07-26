@@ -1,0 +1,410 @@
+local M = {}
+local utils = require("devdocs.utils")
+
+local _c = nil
+
+local function normalize_browser_list(browsers)
+  if type(browsers) ~= "table" then
+    return { browsers }
+  end
+  if type(browsers[1]) == "table" then
+    return browsers
+  end
+  if #browsers > 1 then
+    for i = 2, #browsers do
+      if type(browsers[i]) == "string" and browsers[i]:sub(1, 1) == "-" then
+        return { browsers }
+      end
+    end
+  end
+  return browsers
+end
+
+function M.build_command(browser, file)
+  if type(browser) == "table" then
+    local cmd = vim.deepcopy(browser)
+    local has_file = false
+    for i, arg in ipairs(cmd) do
+      if arg == "{file}" then
+        cmd[i] = file
+        has_file = true
+      end
+    end
+    if not has_file then
+      if file and file:match("^-") then
+        table.insert(cmd, "--")
+      end
+      table.insert(cmd, file)
+    end
+    return cmd
+  end
+  if type(browser) == "string" and browser ~= "" then
+    if file and file:match("^-") then
+      return { browser, "--", file }
+    end
+    return { browser, file }
+  end
+  return nil
+end
+
+function M.resolve_first(browsers, file)
+  local list = normalize_browser_list(browsers)
+  for _, b in ipairs(list) do
+    local cmd = M.build_command(b, file)
+    if cmd then
+      local exe = type(b) == "table" and b[1] or b
+      if vim.fn.executable(exe) == 1 then
+        return cmd
+      end
+    end
+  end
+  return M.build_command(list[1], file)
+end
+
+local _preview_cache = {}
+
+local function file_for_entry(entry)
+  local path = entry.path:gsub("#.*$", "")
+  if vim.fn.has("win32") == 1 then
+    path = path:gsub("[?*:|<>\"]", "_")
+  end
+  local file = entry.docset.doc_dir .. "/" .. path .. ".html"
+  return utils.normalize_path(file)
+end
+
+function M.preview_text(entry)
+  local key = entry.docset.path .. "::" .. entry.path
+  if _preview_cache[key] then
+    return _preview_cache[key]
+  end
+
+  local file = file_for_entry(entry)
+  local cfg = require("devdocs.config").opts
+  local cmd = M.resolve_first(cfg.browser, file)
+  if not cmd then
+    return "No browser configured"
+  end
+
+  local ok, result = pcall(function()
+    if vim.system then
+      return vim.system(cmd, { text = true }):wait()
+    end
+    local out = vim.fn.system(cmd)
+    return { code = vim.v.shell_error, stdout = out, stderr = "" }
+  end)
+
+  local text
+  if not ok or not result or result.code ~= 0 then
+    text = "Preview failed: " .. (result and result.stderr or tostring(ok))
+  else
+    text = result.stdout or ""
+  end
+
+  local max_lines = cfg.preview_max_lines
+  if max_lines and max_lines > 0 then
+    local lines = vim.split(text, "\n", { plain = true })
+    if #lines > max_lines then
+      lines = vim.list_slice(lines, 1, max_lines)
+      table.insert(lines, "")
+      table.insert(lines, "... (truncated; open doc to see full content)")
+      text = table.concat(lines, "\n")
+    end
+  end
+
+  _preview_cache[key] = text
+  return text
+end
+
+local function clear_state()
+  _c = nil
+end
+
+local function container_valid()
+  if not _c then
+    return false
+  end
+  if _c.type == "tab" then
+    return _c.tab and vim.api.nvim_tabpage_is_valid(_c.tab)
+  end
+  return _c.win and vim.api.nvim_win_is_valid(_c.win)
+end
+
+local function focus_container()
+  if not container_valid() then
+    return false
+  end
+  if _c.type == "tab" then
+    vim.api.nvim_set_current_tabpage(_c.tab)
+    _c.win = vim.api.nvim_tabpage_get_win(_c.tab)
+  else
+    vim.api.nvim_set_current_win(_c.win)
+  end
+  return true
+end
+
+local function parse_mode(window)
+  local mode = window.mode
+  if type(mode) == "string" then
+    return mode, {}
+  end
+  return mode[1], mode[2] or {}
+end
+
+local function split_command(split, opts)
+  if split == "split" then
+    local pos = opts.position
+    if pos == "below" then
+      return "belowright split"
+    elseif pos == "above" then
+      return "aboveleft split"
+    end
+    return "split"
+  end
+  if split == "vsplit" then
+    local pos = opts.position
+    if pos == "right" then
+      return "rightbelow vsplit"
+    elseif pos == "left" then
+      return "aboveleft vsplit"
+    end
+    return "vsplit"
+  end
+  return "vsplit"
+end
+
+local function create_container(cfg)
+  clear_state()
+  local split, opts = parse_mode(cfg.window)
+  _c = { type = split, bufs = {}, index = 0 }
+
+  if split == "float" then
+    local width = math.floor(vim.o.columns * (opts.width or 0.8))
+    local height = math.floor(vim.o.lines * (opts.height or 0.85))
+    local row = math.floor((vim.o.lines - height) / 2)
+    local col = math.floor((vim.o.columns - width) / 2)
+    local buf = vim.api.nvim_create_buf(false, true)
+    vim.bo[buf].bufhidden = "wipe"
+    _c.win = vim.api.nvim_open_win(buf, true, {
+      relative = "editor",
+      width = width,
+      height = height,
+      row = row,
+      col = col,
+      style = "minimal",
+      border = "none",
+    })
+  elseif split == "tab" then
+    vim.cmd("tabnew")
+    _c.tab = vim.api.nvim_get_current_tabpage()
+    _c.win = vim.api.nvim_get_current_win()
+  else
+    vim.cmd(split_command(split, opts))
+    _c.win = vim.api.nvim_get_current_win()
+  end
+
+  if split == "tab" then
+    vim.api.nvim_create_autocmd("TabClosed", {
+      pattern = tostring(_c.tab),
+      once = true,
+      callback = clear_state,
+    })
+  else
+    vim.api.nvim_create_autocmd("WinClosed", {
+      pattern = tostring(_c.win),
+      once = true,
+      callback = clear_state,
+    })
+  end
+end
+
+local function ensure_container(cfg)
+  local split, _ = parse_mode(cfg.window)
+  if container_valid() and _c.type == split then
+    focus_container()
+    return
+  end
+  if container_valid() then
+    close_container()
+  end
+  create_container(cfg)
+end
+
+local function create_doc_item(entry)
+  local cfg = require("devdocs.config").opts
+  local file = file_for_entry(entry)
+  local cmd = M.resolve_first(cfg.browser, file)
+  if not cmd then
+    return nil
+  end
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.bo[buf].buflisted = false
+  vim.bo[buf].swapfile = false
+  return { buf = buf, entry = entry, title = entry.name, cmd = cmd }
+end
+
+local function run_item_terminal(item)
+  if not focus_container() then
+    return
+  end
+  vim.api.nvim_set_current_buf(item.buf)
+  vim.fn.termopen(item.cmd)
+end
+
+local function update_winbar()
+  if not _c or _c.type ~= "float" or not _c.win or not vim.api.nvim_win_is_valid(_c.win) then
+    return
+  end
+  if #_c.bufs == 0 then
+    pcall(vim.api.nvim_set_option_value, "winbar", "", { win = _c.win })
+    return
+  end
+  local cfg = require("devdocs.config").opts
+  local hl = cfg.highlights or {}
+  local hl_normal = hl.tab or "TabLine"
+  local hl_active = hl.tab_active or "TabLineSel"
+  local parts = {}
+  for i, item in ipairs(_c.bufs) do
+    local active = i == _c.index
+    local label = " " .. item.title .. " "
+    local group = active and hl_active or hl_normal
+    table.insert(parts, "%#" .. group .. "#%" .. i .. "@v:lua._G.__devdocs_winbar_click@" .. label .. "%X")
+  end
+  table.insert(parts, "%*")
+  pcall(vim.api.nvim_set_option_value, "winbar", table.concat(parts, ""), { win = _c.win })
+end
+
+_G.__devdocs_winbar_click = function(minwid)
+  M.switch_buffer(minwid)
+end
+
+function M.switch_buffer(idx)
+  if not _c or idx < 1 or idx > #_c.bufs then
+    return
+  end
+  _c.index = idx
+  local item = _c.bufs[idx]
+  if focus_container() then
+    vim.api.nvim_win_set_buf(_c.win, item.buf)
+  end
+  update_winbar()
+end
+
+function close_container()
+  local c = _c
+  clear_state()
+  if not c then
+    return
+  end
+  for _, item in ipairs(c.bufs) do
+    if vim.api.nvim_buf_is_valid(item.buf) then
+      vim.api.nvim_buf_delete(item.buf, { force = true })
+    end
+  end
+  if c.type == "tab" and c.tab and vim.api.nvim_tabpage_is_valid(c.tab) then
+    vim.api.nvim_tabpage_close(c.tab, true)
+  elseif c.win and vim.api.nvim_win_is_valid(c.win) then
+    vim.api.nvim_win_close(c.win, true)
+  end
+end
+
+local function close_current_buffer()
+  local c = _c
+  if not c then
+    return
+  end
+  local item = table.remove(c.bufs, c.index)
+  if not item then
+    return
+  end
+
+  local remaining = c.bufs
+  local next_index = math.min(c.index, #remaining)
+  if remaining[next_index] then
+    c.index = next_index
+    M.switch_buffer(next_index)
+  end
+
+  if vim.api.nvim_buf_is_valid(item.buf) then
+    vim.api.nvim_buf_delete(item.buf, { force = true })
+  end
+
+  if #remaining == 0 then
+    clear_state()
+    if c.type == "tab" and c.tab and vim.api.nvim_tabpage_is_valid(c.tab) then
+      vim.api.nvim_tabpage_close(c.tab, true)
+    elseif c.win and vim.api.nvim_win_is_valid(c.win) then
+      vim.api.nvim_win_close(c.win, true)
+    end
+  end
+end
+
+local function setup_buffer_keymaps(buf)
+  vim.keymap.set("t", "<Esc>", "<C-\\><C-n>", { buffer = buf, silent = true })
+  vim.keymap.set("t", "<C-c>", "<C-\\><C-n>", { buffer = buf, silent = true })
+  vim.keymap.set("t", "<C-q>", close_container, { buffer = buf, silent = true })
+
+  vim.keymap.set("t", "<C-h>", function()
+    if _c then
+      M.switch_buffer(_c.index - 1)
+    end
+  end, { buffer = buf, silent = true })
+  vim.keymap.set("t", "<C-l>", function()
+    if _c then
+      M.switch_buffer(_c.index + 1)
+    end
+  end, { buffer = buf, silent = true })
+  vim.keymap.set("t", "<C-d>", close_current_buffer, { buffer = buf, silent = true })
+
+  vim.keymap.set("n", "q", close_container, { buffer = buf, silent = true })
+  vim.keymap.set("n", "<Esc>", close_container, { buffer = buf, silent = true })
+  vim.keymap.set("n", "d", close_current_buffer, { buffer = buf, silent = true })
+  vim.keymap.set("n", "H", function()
+    if _c then
+      M.switch_buffer(_c.index - 1)
+    end
+  end, { buffer = buf, silent = true })
+  vim.keymap.set("n", "L", function()
+    if _c then
+      M.switch_buffer(_c.index + 1)
+    end
+  end, { buffer = buf, silent = true })
+
+  vim.api.nvim_create_autocmd("TermClose", {
+    buffer = buf,
+    once = true,
+    callback = function()
+      vim.cmd("stopinsert")
+    end,
+  })
+end
+
+function M.open(entries_or_entry)
+  local entries = entries_or_entry
+  if entries.docset then
+    entries = { entries_or_entry }
+  end
+  if #entries == 0 then
+    return
+  end
+
+  local cfg = require("devdocs.config").opts
+  ensure_container(cfg)
+
+  local first_new_index = #_c.bufs + 1
+  for _, entry in ipairs(entries) do
+    local item = create_doc_item(entry)
+    if item then
+      setup_buffer_keymaps(item.buf)
+      run_item_terminal(item)
+      table.insert(_c.bufs, item)
+    end
+  end
+
+  if first_new_index > #_c.bufs then
+    return
+  end
+  _c.index = first_new_index
+  M.switch_buffer(_c.index)
+end
+
+return M

@@ -1,0 +1,233 @@
+local M = {}
+
+local filter = require("devdocs.filter")
+
+local function hl_to_ansi(hl_name, attrs)
+  local ok, hl = pcall(vim.api.nvim_get_hl, 0, { name = hl_name, link = false })
+  if not ok or not hl then
+    return ""
+  end
+  local codes = {}
+  if attrs and attrs.italic then
+    table.insert(codes, "3")
+  end
+  if attrs and attrs.dim then
+    table.insert(codes, "2")
+  end
+  if hl.fg then
+    local r = math.floor(hl.fg / 65536) % 256
+    local g = math.floor(hl.fg / 256) % 256
+    local b = hl.fg % 256
+    table.insert(codes, string.format("38;2;%d;%d;%d", r, g, b))
+  end
+  if #codes == 0 then
+    return ""
+  end
+  return string.format("\27[%sm", table.concat(codes, ";"))
+end
+
+local function median_widths(entries)
+  local type_lens = {}
+  local docset_lens = {}
+  for _, e in ipairs(entries) do
+    table.insert(type_lens, vim.fn.strdisplaywidth("[" .. e.type .. "]"))
+    table.insert(docset_lens, vim.fn.strdisplaywidth(e.docset.title or e.docset.name))
+  end
+  table.sort(type_lens)
+  table.sort(docset_lens)
+  local function mid(t)
+    if #t == 0 then return 0 end
+    return t[math.ceil(#t / 2)]
+  end
+  return {
+    type = math.max(6, math.min(mid(type_lens), 16)),
+    docset = math.max(8, math.min(mid(docset_lens), 22)),
+  }
+end
+
+local function pad_right(str, width)
+  local w = vim.fn.strdisplaywidth(str)
+  if w > width then
+    return str:sub(1, math.max(1, width - 1)) .. "…"
+  end
+  return str .. string.rep(" ", width - w)
+end
+
+local function format_entry(entry, cfg, widths)
+  local hl = cfg.highlights or {}
+  local type_ansi = hl_to_ansi(hl.entry_type or "Comment", { dim = true })
+  local docset_ansi = hl_to_ansi(hl.entry_docset or "Comment", { dim = true })
+  local reset = "\27[0m"
+  local docset_name = entry.docset.title or entry.docset.name
+
+  local name_part = pad_right(entry.name, widths.name)
+  local type_part = pad_right("[" .. entry.type .. "]", widths.type)
+  local docset_part = pad_right(docset_name, widths.docset)
+  local meta_part = type_ansi .. type_part .. reset .. " " .. docset_ansi .. docset_part .. reset
+  return name_part, meta_part
+end
+
+function M.open(entries, opts)
+  opts = opts or {}
+  local ok, fzf = pcall(require, "fzf-lua")
+  if not ok then
+    require("devdocs.utils").notify("fzf-lua not found", vim.log.levels.ERROR)
+    return
+  end
+  local fzf_actions = require("fzf-lua.actions")
+
+  local cfg = require("devdocs.config").opts
+  local docsets = opts.docsets or {}
+  local query = opts.query or ""
+
+  local filters = opts.filters or { docsets = {}, types = {} }
+  local content_query = query
+  if not opts.filters then
+    local docset_ids, types, content = filter.parse_filter(query, docsets, entries)
+    if docset_ids then
+      filters.docsets = docset_ids
+      filters.types = types or {}
+      content_query = content or ""
+    end
+  end
+
+  local shown = filter.filter_entries(entries, filters)
+  local widths = median_widths(entries)
+
+  local results_w = math.floor(vim.o.columns * 0.35)
+  results_w = math.max(results_w, 30)
+  local meta_w = widths.type + 1 + widths.docset + 2
+  local name_w = math.max(8, results_w - meta_w)
+  if name_w < 8 then
+    widths.docset = math.max(8, widths.docset + name_w - 4)
+    meta_w = widths.type + 1 + widths.docset + 2
+    name_w = math.max(8, results_w - meta_w)
+  end
+  widths.name = name_w
+
+  local function contents(cb)
+    for i, entry in ipairs(shown) do
+      local name_part, meta_part = format_entry(entry, cfg, widths)
+      cb(name_part .. "\t" .. meta_part .. "\t" .. i)
+    end
+    cb(nil)
+  end
+
+  local function resolve_selected(raw)
+    local idx = tonumber(raw and raw:match("\t(%d+)$"))
+    return idx and shown[idx]
+  end
+
+  local function reopen(new_filters, new_query)
+    M.open(entries, {
+      prompt = opts.prompt,
+      query = new_query or "",
+      filters = new_filters,
+      docsets = docsets,
+      on_select = opts.on_select,
+    })
+  end
+
+  local function apply_query_filter(query_text)
+    local docset_ids, types, content = filter.parse_filter(query_text, docsets, entries)
+    if not docset_ids then
+      return false
+    end
+    reopen({ docsets = docset_ids, types = types or {} }, content or "")
+    return true
+  end
+
+  local ok_exec, exec_err = pcall(fzf.fzf_exec, contents, {
+    prompt = opts.prompt or "DevDocs> ",
+    query = content_query,
+    winopts = {
+      border = "none",
+      preview = {
+        horizontal = "right:50%",
+        layout = "horizontal",
+        border = "none",
+      },
+    },
+    preview = function(items)
+      local entry = resolve_selected(items[1])
+      if not entry then
+        return ""
+      end
+      return require("devdocs.browser").preview_text(entry)
+    end,
+    fzf_opts = {
+      ["--ansi"] = true,
+      ["--multi"] = true,
+      ["--delimiter"] = "\\t",
+      ["--with-nth"] = "1,2",
+      ["--nth"] = "1",
+      ["--header"] = filter.build_header("C-f filter | C-r reset | C-q quit", filters, #shown),
+    },
+    actions = {
+      ["default"] = function(selected)
+        if apply_query_filter(fzf.get_last_query() or "") then
+          return
+        end
+        if opts.on_select and #selected > 0 then
+          local resolved = {}
+          for _, raw in ipairs(selected) do
+            local entry = resolve_selected(raw)
+            if entry then
+              table.insert(resolved, entry)
+            end
+          end
+          opts.on_select(resolved)
+        end
+      end,
+      ["ctrl-f"] = function()
+        local last_query = fzf.get_last_query() or ""
+        if not apply_query_filter(last_query) then
+          require("devdocs.utils").notify("No valid filter in query", vim.log.levels.WARN)
+          reopen(filters, last_query)
+        end
+      end,
+      ["ctrl-r"] = function()
+        reopen({ docsets = {}, types = {} }, "")
+      end,
+      ["ctrl-q"] = fzf_actions.dummy_abort,
+    },
+  })
+  if not ok_exec then
+    require("devdocs.utils").notify("fzf_exec failed: " .. tostring(exec_err), vim.log.levels.ERROR)
+  end
+end
+
+function M.select(items, opts)
+  opts = opts or {}
+  local ok, fzf = pcall(require, "fzf-lua")
+  if not ok then
+    require("devdocs.utils").notify("fzf-lua not found", vim.log.levels.ERROR)
+    return
+  end
+
+  local labels = {}
+  for i, item in ipairs(items) do
+    labels[i] = item.label
+  end
+
+  local ok_exec, exec_err = pcall(fzf.fzf_exec, labels, {
+    prompt = (opts.prompt or "Select") .. "> ",
+    actions = {
+      ["default"] = function(selected)
+        if opts.on_select and #selected > 0 then
+          for _, item in ipairs(items) do
+            if item.label == selected[1] then
+              opts.on_select(item)
+              return
+            end
+          end
+        end
+      end,
+    },
+  })
+  if not ok_exec then
+    require("devdocs.utils").notify("fzf_exec failed: " .. tostring(exec_err), vim.log.levels.ERROR)
+  end
+end
+
+return M
