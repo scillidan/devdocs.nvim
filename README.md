@@ -106,3 +106,7 @@ end, { desc = "DevDocs lookup selection" })
 | `<C-h>` / `<C-l>` | Switch buffer (terminal mode) |
 | `<C-d>` | Close buffer (terminal mode) |
 | `<C-q>` | Close container (terminal mode) |
+
+## See also
+
+- [devdocs.nvim](https://github.com/maskudo/devdocs.nvim)
