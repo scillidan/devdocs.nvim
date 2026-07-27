@@ -17,7 +17,14 @@ function M.notify(msg, level)
 end
 
 function M.mkdir(dir)
-  return vim.fn.mkdir(dir, "p") == 1
+  local ok = vim.fn.mkdir(dir, "p")
+  if ok ~= 1 and vim.in_fast_event() then
+    vim.schedule(function()
+      vim.fn.mkdir(dir, "p")
+    end)
+    return true
+  end
+  return ok == 1
 end
 
 function M.read_json(path)
