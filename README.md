@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="assets/devdocs-nvim.png" alt="devdocs.nvim" width="800" />
+  <img src="assets/devdocs-nvim.png" alt="devdocs.nvim" width="600" />
 </div>
 
 # devdocs.nvim
