@@ -215,6 +215,7 @@ function M.extract(slug, callback)
           mtime = info.mtime or os.time(),
         })
         pcall(vim.fn.delete, tar_path)
+        notify(slug .. " installed")
       else
         state.set(slug, { installed = false, downloading = false })
         notify("Failed to extract " .. slug, vim.log.levels.ERROR)
