@@ -148,6 +148,7 @@ end
 function M.setup(opts)
   config.setup(opts)
   utils.mkdir(config.data_dir())
+  utils.mkdir(config.docs_dir())
   discover_docs()
 
   vim.schedule(function()
