@@ -69,7 +69,7 @@ function M.fetch_metadata(force, callback)
         _metadata = nil
         state.metadata_downloaded(os.time())
         if callback then
-          callback()
+          vim.schedule(callback)
         end
         return
       end
@@ -80,7 +80,7 @@ function M.fetch_metadata(force, callback)
       end
       notify("Failed to fetch metadata: " .. (res.stderr or "unknown error"), vim.log.levels.ERROR)
       if callback then
-        callback()
+        vim.schedule(callback)
       end
     end)
   end
