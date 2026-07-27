@@ -1,3 +1,7 @@
+<div align="center">
+  <img src="assets/devdocs-nvim.png" alt="devdocs.nvim" width="800" />
+</div>
+
 # devdocs.nvim
 
 Read [DevDocs](https://devdocs.io) documentation inside Neovim.
