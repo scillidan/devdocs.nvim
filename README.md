@@ -32,9 +32,9 @@ Authors: DeepSeek-V4-Flash🧙‍♂️, scillidan🤡
       --   Windows: ~/AppData/Local/nvim-data/devdocs/docs
       ensure_installed = {}, -- e.g. { "html", "css", "javascript", "http" }
       -- The local/offline devdocs search paths, with multiple paths supported.
+      -- You can add a fallback dir when loading local/non-official docsets. Trying to download some docs (.html) from https://github.com/scillidan/file_devdocs/releases for testing.
       search_dirs = {
         vim.fn.stdpath("data") .. "/devdocs/docs",
-        -- Supporting multiple paths. If `:DevDocsInstall` fails, you can add an offline fallback dir (pre-downloaded docs go here). Trying to download some docs (.html) from https://github.com/scillidan/file_devdocs/releases for testing.
         -- vim.fn.expand(os.getenv("USERPROFILE") .. "/Documents/devdocs")
       },
       browser = "", -- "reader" or { { "reader", "--image-mode", "none" }, "elinks" }
