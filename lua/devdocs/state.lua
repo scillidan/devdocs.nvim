@@ -48,11 +48,12 @@ function M.installed()
 end
 
 function M.metadata_downloaded(time)
-  if time then
+  if type(time) == "number" then
     load().metadata.downloaded = time
     save()
   end
-  return load().metadata.downloaded or 0
+  local d = load().metadata.downloaded
+  return type(d) == "number" and d or 0
 end
 
 function M.is_stale()
@@ -60,7 +61,8 @@ function M.is_stale()
   if ttl <= 0 then
     return true
   end
-  local downloaded = load().metadata.downloaded or 0
+  local d = load().metadata.downloaded
+  local downloaded = type(d) == "number" and d or 0
   return (os.time() - downloaded) > (ttl * 86400)
 end
 
