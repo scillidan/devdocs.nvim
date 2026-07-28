@@ -19,7 +19,7 @@ Authors: DeepSeek-V4-Flash🧙‍♂️, scillidan🤡
 - Neovim 0.10+
 - `curl` + `tar`
 - [fzf-lua](https://github.com/ibhagwan/fzf-lua) (default) or [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim)
-- A terminal browser: [reader](https://github.com/mrusme/reader), [elinks](https://github.com/rkd77/elinks), [lynx](https://invisible-island.net/lynx/lynx.html), [w3m](https://invisible-island.net/lynx/lynx.html), etc.
+- A terminal browser: [reader](https://github.com/mrusme/reader), [links](http://links.twibright.com), [elinks](https://github.com/rkd77/elinks), [lynx](https://invisible-island.net/lynx/lynx.html), [w3m](https://invisible-island.net/lynx/lynx.html), etc.
 
 ## Install
 
