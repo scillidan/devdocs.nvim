@@ -41,7 +41,7 @@ Authors: DeepSeek-V4-Flash🧙‍♂️, scillidan🤡
         vim.fn.stdpath("data") .. "/devdocs/docs",
         -- vim.fn.expand(os.getenv("USERPROFILE") .. "/Documents/devdocs")
       },
-      browser = "", -- "reader" or { { "reader", "--image-mode", "none" }, "elinks" }
+      browser = "", -- "reader" or { { "reader", "--image-mode", "none" }, "links" }
       picker = "fzf", -- Or "telescope"
       highlights = {
         tab = "TabLine",
